@@ -76,8 +76,10 @@ namespace Shadowsocks.View
 
         // color definition for icon color transformation
         private readonly Color colorMaskBlue = Color.FromArgb(255, 25, 125, 191);
-        private readonly Color colorMaskDarkSilver = Color.FromArgb(128, 192, 192, 192);
-        private readonly Color colorMaskLightSilver = Color.FromArgb(192, 192, 192);
+        // 禁用状态：在浅色主题下使用更深且更不透明的灰色以提高可见性
+        private readonly Color colorMaskDarkSilver = Color.FromArgb(160, 176, 176, 176);
+        // 禁用状态（暗色主题）：使用略深的灰色
+        private readonly Color colorMaskLightSilver = Color.FromArgb(176, 176, 176);
         private readonly Color colorMaskEclipse = Color.FromArgb(192, 64, 64, 64);
 
         public MenuViewController(ShadowsocksController controller)
