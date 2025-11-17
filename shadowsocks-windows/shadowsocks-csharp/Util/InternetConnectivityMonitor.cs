@@ -39,7 +39,7 @@ namespace Shadowsocks.Util
         private int _consecutiveSuccesses = 0;
         private readonly int _failureThreshold;
         private readonly int _successThreshold;
-        private readonly Uri _probeUri = new Uri("https://www.baidu.com");
+        private readonly Uri _probeUri = new Uri("http://www.msftconnecttest.com/connecttest.txt");
 
         /// <summary>
         /// 联网状态变化事件。
