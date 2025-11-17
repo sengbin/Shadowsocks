@@ -142,19 +142,29 @@ namespace Shadowsocks.Util
             {
                 return false;
             }
-
             try
             {
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(_probeUri);
                 request.Method = "GET";
-                // 不再强制禁用系统代理，允许在需要代理的环境中通过系统代理访问探测地址
+                // 允许使用系统代理，以便在需要代理的网络环境中也能正确探测
                 // request.Proxy = null;
+                // 设置读写超时作为备用（对同步 API 有效），对异步我们使用显式的 Task.WhenAny 超时判断
                 request.Timeout = 5000;
                 request.ReadWriteTimeout = 5000;
                 request.KeepAlive = false;
                 request.UserAgent = "ShadowsocksConnectivityMonitor";
 
-                using (HttpWebResponse response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+                // 如果 GetResponseAsync 在 5 秒内没有完成，则视为超时并判断为断网
+                var getResponseTask = request.GetResponseAsync();
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+                var finished = await Task.WhenAny(getResponseTask, timeoutTask).ConfigureAwait(false);
+                if (finished != getResponseTask)
+                {
+                    try { request.Abort(); } catch { }
+                    return false;
+                }
+
+                using (HttpWebResponse response = (HttpWebResponse)await getResponseTask.ConfigureAwait(false))
                 {
                     return response.StatusCode == HttpStatusCode.OK;
                 }
