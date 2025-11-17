@@ -225,6 +225,11 @@ namespace Shadowsocks
             SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged;
             Application.ThreadException -= Application_ThreadException;
             HotKeys.Destroy();
+            if (MenuController != null)
+            {
+                MenuController.Dispose();
+                MenuController = null;
+            }
             if (MainController != null)
             {
                 MainController.Stop();

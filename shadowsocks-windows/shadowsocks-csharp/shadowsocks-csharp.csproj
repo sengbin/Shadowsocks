@@ -291,6 +291,7 @@
     <Compile Include="Util\SystemProxy\ProxyException.cs" />
     <Compile Include="Util\SystemProxy\Sysproxy.cs" />
     <Compile Include="Util\Util.cs" />
+    <Compile Include="Util\InternetConnectivityMonitor.cs" />
     <Compile Include="Util\ViewUtils.cs" />
     <Compile Include="ViewModels\ForwardProxyViewModel.cs" />
     <Compile Include="ViewModels\HotkeysViewModel.cs" />

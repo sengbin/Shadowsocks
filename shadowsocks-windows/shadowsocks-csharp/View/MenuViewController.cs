@@ -14,13 +14,14 @@ using System.Text;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 using System.Windows.Threading;
+using System.Threading;
 using ZXing;
 using ZXing.Common;
 using ZXing.QrCode;
 
 namespace Shadowsocks.View
 {
-    public class MenuViewController
+    public class MenuViewController : IDisposable
     {
         private readonly Logger logger = LogManager.GetCurrentClassLogger();
 
@@ -28,7 +29,12 @@ namespace Shadowsocks.View
         public UpdateChecker updateChecker;
 
         private NotifyIcon _notifyIcon;
-        private Icon icon, icon_in, icon_out, icon_both, previousIcon;
+        private Icon icon, icon_in, icon_out, icon_both, icon_offline, icon_transparent, previousIcon;
+        private System.Windows.Forms.Timer _blinkTimer;
+        private bool _isOfflineBlinking;
+        private bool _blinkToggle;
+        private SynchronizationContext _uiContext;
+        private InternetConnectivityMonitor _connectivityMonitor;
 
         private bool _isStartupCheck;
         private string _urlToOpen;
@@ -77,6 +83,10 @@ namespace Shadowsocks.View
         public MenuViewController(ShadowsocksController controller)
         {
             this.controller = controller;
+            _uiContext = null; // will capture when UI message loop is ready
+            _blinkTimer = new System.Windows.Forms.Timer();
+            _blinkTimer.Interval = 600;
+            _blinkTimer.Tick += BlinkTimer_Tick;
 
             LoadMenu();
 
@@ -107,6 +117,8 @@ namespace Shadowsocks.View
 
             LoadCurrentConfiguration();
 
+            InitializeConnectivityMonitor();
+
             Configuration config = controller.GetCurrentConfiguration();
 
             if (config.firstRun)
@@ -122,6 +134,58 @@ namespace Shadowsocks.View
 
         #region Tray Icon
 
+        /// <summary>
+        /// 初始化联网状态监控。
+        /// </summary>
+        private void InitializeConnectivityMonitor()
+        {
+            // 创建监控器但延后启动，等待 UI 消息循环就绪以保证闪烁 Timer 在 UI 线程上工作
+            _connectivityMonitor = new InternetConnectivityMonitor();
+            _connectivityMonitor.ConnectivityChanged += ConnectivityMonitor_ConnectivityChanged;
+
+            // 当应用消息循环启动并进入空闲时，捕获 UI SynchronizationContext 并启动监控
+            Application.Idle += StartConnectivityMonitorOnIdle;
+        }
+
+        /// <summary>
+        /// 在应用进入空闲时捕获 UI SynchronizationContext 并启动联网监控器。
+        /// 仅执行一次，然后取消订阅 Idle 事件。
+        /// </summary>
+        private void StartConnectivityMonitorOnIdle(object sender, EventArgs e)
+        {
+            try
+            {
+                Application.Idle -= StartConnectivityMonitorOnIdle;
+                if (_uiContext == null)
+                {
+                    _uiContext = SynchronizationContext.Current ?? new System.Windows.Forms.WindowsFormsSynchronizationContext();
+                }
+                _connectivityMonitor?.Start();
+            }
+            catch (Exception ex)
+            {
+                logger.Warn(ex, "Failed to start InternetConnectivityMonitor on idle.");
+            }
+        }
+
+        /// <summary>
+        /// 处理联网状态变化事件。
+        /// </summary>
+        private void ConnectivityMonitor_ConnectivityChanged(object sender, ConnectivityChangedEventArgs e)
+        {
+            _uiContext.Post(_ =>
+            {
+                if (e.IsConnected)
+                {
+                    StopOfflineBlink();
+                }
+                else
+                {
+                    StartOfflineBlink();
+                }
+            }, null);
+        }
+
         private void UpdateTrayIconAndNotifyText()
         {
             Configuration config = controller.GetCurrentConfiguration();
@@ -131,10 +195,13 @@ namespace Shadowsocks.View
             Color colorMask = SelectColorMask(enabled, global);
             Size iconSize = SelectIconSize();
 
-            UpdateIconSet(colorMask, iconSize, out icon, out icon_in, out icon_out, out icon_both);
+            UpdateIconSet(colorMask, iconSize, out icon, out icon_in, out icon_out, out icon_both, out icon_offline, out icon_transparent);
 
             previousIcon = icon;
-            _notifyIcon.Icon = previousIcon;
+            if (!_isOfflineBlinking)
+            {
+                _notifyIcon.Icon = previousIcon;
+            }
 
             string serverInfo = null;
             if (controller.GetCurrentStrategy() != null)
@@ -226,7 +293,7 @@ namespace Shadowsocks.View
         }
 
         private void UpdateIconSet(Color colorMask, Size size,
-            out Icon icon, out Icon icon_in, out Icon icon_out, out Icon icon_both)
+            out Icon icon, out Icon icon_in, out Icon icon_out, out Icon icon_both, out Icon icon_offline, out Icon icon_transparent)
         {
             Bitmap iconBitmap;
 
@@ -238,6 +305,89 @@ namespace Shadowsocks.View
             icon_in = Icon.FromHandle(ViewUtils.ResizeBitmap(ViewUtils.AddBitmapOverlay(iconBitmap, Resources.ss32In), size.Width, size.Height).GetHicon());
             icon_out = Icon.FromHandle(ViewUtils.ResizeBitmap(ViewUtils.AddBitmapOverlay(iconBitmap, Resources.ss32In), size.Width, size.Height).GetHicon());
             icon_both = Icon.FromHandle(ViewUtils.ResizeBitmap(ViewUtils.AddBitmapOverlay(iconBitmap, Resources.ss32In, Resources.ss32Out), size.Width, size.Height).GetHicon());
+
+            Bitmap offlineBitmap = ViewUtils.ChangeBitmapColor(Resources.ss32Fill, Color.FromArgb(255, 220, 32, 32));
+            offlineBitmap = ViewUtils.AddBitmapOverlay(offlineBitmap, Resources.ss32Outline);
+            icon_offline = Icon.FromHandle(ViewUtils.ResizeBitmap(offlineBitmap, size.Width, size.Height).GetHicon());
+
+            // 生成一个完全透明的图标，用于实现“透明闪烁”效果（若希望闪烁为不可见）
+            Bitmap transparent = new Bitmap(size.Width, size.Height);
+            using (Graphics g = Graphics.FromImage(transparent))
+            {
+                g.Clear(Color.Transparent);
+                g.Save();
+            }
+            icon_transparent = Icon.FromHandle(ViewUtils.ResizeBitmap(transparent, size.Width, size.Height).GetHicon());
+        }
+
+        /// <summary>
+        /// 启动托盘图标闪烁以提示网络断开。
+        /// </summary>
+        private void StartOfflineBlink()
+        {
+            if (_isOfflineBlinking || (_notifyIcon == null) || (icon_offline == null && icon_transparent == null))
+            {
+                return;
+            }
+
+            _isOfflineBlinking = true;
+            _blinkToggle = false;
+            // 优先使用透明图标实现“闪烁为透明”的效果；若不可用则退回为红色图标
+            if (icon_transparent != null)
+            {
+                _notifyIcon.Icon = icon_transparent;
+            }
+            else
+            {
+                _notifyIcon.Icon = icon_offline;
+            }
+            _blinkTimer.Start();
+        }
+
+        /// <summary>
+        /// 停止托盘图标闪烁并恢复原始图标。
+        /// </summary>
+        private void StopOfflineBlink()
+        {
+            if (!_isOfflineBlinking || _notifyIcon == null)
+            {
+                return;
+            }
+
+            _blinkTimer.Stop();
+            _blinkToggle = false;
+            _isOfflineBlinking = false;
+            if (previousIcon != null)
+            {
+                _notifyIcon.Icon = previousIcon;
+            }
+        }
+
+        /// <summary>
+        /// 托盘图标闪烁定时器回调。
+        /// </summary>
+        private void BlinkTimer_Tick(object sender, EventArgs e)
+        {
+            if (!_isOfflineBlinking || previousIcon == null || _notifyIcon == null)
+            {
+                return;
+            }
+
+            // 如果存在透明图标，则在透明和原图之间切换；否则在红色离线图标和原图之间切换
+            if (icon_transparent == null && icon_offline == null)
+            {
+                return;
+            }
+
+            _blinkToggle = !_blinkToggle;
+            if (icon_transparent != null)
+            {
+                _notifyIcon.Icon = _blinkToggle ? previousIcon : icon_transparent;
+            }
+            else
+            {
+                _notifyIcon.Icon = _blinkToggle ? icon_offline : previousIcon;
+            }
         }
 
         #endregion
@@ -313,6 +463,9 @@ namespace Shadowsocks.View
         private void controller_TrafficChanged(object sender, EventArgs e)
         {
             if (icon == null)
+                return;
+
+            if (_isOfflineBlinking)
                 return;
 
             Icon newIcon;
@@ -418,6 +571,58 @@ namespace Shadowsocks.View
                     0
                 );
                 config.firstRun = false;
+            }
+        }
+
+        /// <summary>
+        /// 释放托盘控制器相关资源。
+        /// </summary>
+        public void Dispose()
+        {
+            if (controller != null)
+            {
+                controller.EnableStatusChanged -= controller_EnableStatusChanged;
+                controller.ConfigChanged -= controller_ConfigChanged;
+                controller.PACFileReadyToOpen -= controller_FileReadyToOpen;
+                controller.UserRuleFileReadyToOpen -= controller_FileReadyToOpen;
+                controller.ShareOverLANStatusChanged -= controller_ShareOverLANStatusChanged;
+                controller.VerboseLoggingStatusChanged -= controller_VerboseLoggingStatusChanged;
+                controller.ShowPluginOutputChanged -= controller_ShowPluginOutputChanged;
+                controller.EnableGlobalChanged -= controller_EnableGlobalChanged;
+                controller.Errored -= controller_Errored;
+                controller.UpdatePACFromGeositeCompleted -= controller_UpdatePACFromGeositeCompleted;
+                controller.UpdatePACFromGeositeError -= controller_UpdatePACFromGeositeError;
+                controller.TrafficChanged -= controller_TrafficChanged;
+            }
+
+            if (updateChecker != null)
+            {
+                updateChecker.CheckUpdateCompleted -= updateChecker_CheckUpdateCompleted;
+                updateChecker = null;
+            }
+
+            StopOfflineBlink();
+
+            if (_blinkTimer != null)
+            {
+                _blinkTimer.Stop();
+                _blinkTimer.Tick -= BlinkTimer_Tick;
+                _blinkTimer.Dispose();
+                _blinkTimer = null;
+            }
+
+            if (_connectivityMonitor != null)
+            {
+                _connectivityMonitor.ConnectivityChanged -= ConnectivityMonitor_ConnectivityChanged;
+                _connectivityMonitor.Dispose();
+                _connectivityMonitor = null;
+            }
+
+            if (_notifyIcon != null)
+            {
+                _notifyIcon.Visible = false;
+                _notifyIcon.Dispose();
+                _notifyIcon = null;
             }
         }
 
