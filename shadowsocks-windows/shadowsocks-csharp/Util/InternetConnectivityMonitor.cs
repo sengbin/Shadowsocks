@@ -146,8 +146,7 @@ namespace Shadowsocks.Util
             {
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(_probeUri);
                 request.Method = "GET";
-                // 允许使用系统代理，以便在需要代理的网络环境中也能正确探测
-                // request.Proxy = null;
+
                 // 设置读写超时作为备用（对同步 API 有效），对异步我们使用显式的 Task.WhenAny 超时判断
                 request.Timeout = 5000;
                 request.ReadWriteTimeout = 5000;
