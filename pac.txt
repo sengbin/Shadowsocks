@@ -1,0 +1,92 @@
+/* 
+  PAC: 本地 & 微软域名走 DIRECT（直连/本地），其余全部走代理
+  使用方法：
+  - 将下方 `PROXY` 字符串替换为你的本地代理地址，例如：
+      var PROXY = "SOCKS5 127.0.0.1:1080";
+      或
+      var PROXY = "PROXY 127.0.0.1:1080";
+  - 保存为文件（例如：`shadowsocks_local_ms.pac`），并在系统/浏览器代理设置中使用该 PAC 文件 URL。
+*/
+
+var PROXY = "PROXY 127.0.0.1:1080"; // <-- 把这里改为你的本地代理地址
+
+// 如需扩展微软相关域名，可在此数组中增加
+var msDomains = [
+    "microsoft.com",
+    "msftconnecttest.com",
+    "msftncsi.com",
+    "windows.net",
+    "microsoftonline.com",
+    "office.com",
+    "live.com",
+    "bing.com",
+    "msn.com",
+    "skype.com",
+    "windowsupdate.com",
+    "visualstudio.com",
+    "azure.com"
+];
+
+/**
+ * 判断 host 是否是本地回环（127.* 或 localhost 或 IPv6 ::1）
+ */
+function isLoopbackHost(host) {
+    if (!host) return false;
+    // 精确匹配 localhost
+    if (host === "localhost") return true;
+    // IPv6 回环
+    if (host === "::1") return true;
+    // IPv4 127.0.0.0/8
+    // isInNet 在 host 为 IP 字符串时有效
+    try {
+        if (isInNet(host, "127.0.0.0", "255.0.0.0")) return true;
+    } catch (e) {
+        // 忽略异常
+    }
+    return false;
+}
+
+/**
+ * 判断 host 是否属于微软相关域名列表（包括主域和任意子域）
+ */
+function isMicrosoftDomain(host) {
+    if (!host) return false;
+    // 先做精确匹配，再检测子域匹配
+    for (var i = 0; i < msDomains.length; i++) {
+        var d = msDomains[i];
+        if (host === d) return true;
+        // dnsDomainIs 可用于检测子域（例如 www.example.com 对 .example.com 返回 true）
+        try {
+            if (dnsDomainIs(host, "." + d)) return true;
+        } catch (e) {
+            // 忽略异常
+        }
+        // 兼容性备选：通配符匹配
+        try {
+            if (shExpMatch(host, "*." + d)) return true;
+        } catch (e) { }
+    }
+    // 作为兜底：如果主机名中包含 microsoft 字样，也判定为微软域（可根据需求移除）
+    try {
+        if (host.toLowerCase().indexOf("microsoft") !== -1) return true;
+    } catch (e) { }
+    return false;
+}
+
+/**
+ * PAC 主入口
+ */
+function FindProxyForURL(url, host) {
+    // 1) 本地回环直接走 DIRECT
+    if (isLoopbackHost(host)) {
+        return "DIRECT";
+    }
+
+    // 2) 微软域名走 DIRECT（直连）
+    if (isMicrosoftDomain(host)) {
+        return "DIRECT";
+    }
+
+    // 3) 其它所有流量走代理
+    return PROXY;
+}
