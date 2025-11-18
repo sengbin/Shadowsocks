@@ -54,9 +54,9 @@ namespace Shadowsocks.Util
         /// 初始化监控器。
         /// </summary>
         /// <param name="checkInterval">检测间隔，默认 5 秒。</param>
-        /// <param name="successThreshold">判定为在线前需要的连续成功次数，默认 1。</param>
-        /// <param name="failureThreshold">判定为离线前需要的连续失败次数，默认 1。</param>
-        public InternetConnectivityMonitor(TimeSpan? checkInterval = null, int successThreshold = 1, int failureThreshold = 1)
+        /// <param name="successThreshold">判定为在线前需要的连续成功次数，默认 2。</param>
+        /// <param name="failureThreshold">判定为离线前需要的连续失败次数，默认 2。</param>
+        public InternetConnectivityMonitor(TimeSpan? checkInterval = null, int successThreshold = 2, int failureThreshold = 2)
         {
             _checkInterval = checkInterval ?? TimeSpan.FromSeconds(5);
             _successThreshold = Math.Max(1, successThreshold);
