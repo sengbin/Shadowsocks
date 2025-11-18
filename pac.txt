@@ -13,7 +13,7 @@ var PROXY = "PROXY 127.0.0.1:1080"; // <-- 把这里改为你的本地代理地�
 // 如需扩展微软相关域名，可在此数组中增加
 var msDomains = [
     "microsoft.com",
-    "msftconnecttest.com",
+    "http://www.msftconnecttest.com/connecttest.txt",
     "msftncsi.com",
     "windows.net",
     "microsoftonline.com",
