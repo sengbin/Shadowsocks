@@ -234,6 +234,32 @@ namespace Shadowsocks.Controller
                 userruleLines = ProcessUserRules(userrulesString);
             }
 
+            // 确保 Windows NCSI 探针始终走代理（优先级高于默认规则）。
+            // 直接将精确 URL 的阻塞规则加入 user rules，abp_js 中 user rules 优先级高于默认规则，
+            // 因此能保证对该 URL 返回 proxy，而不会被 PAC 的其他规则误判为 DIRECT。
+            try
+            {
+                const string NcsiProbeUrlRule = "|http://www.msftconnecttest.com/connecttest.txt";
+                bool containsNcsi = false;
+                foreach (var r in userruleLines)
+                {
+                    if (!string.IsNullOrEmpty(r) && r.IndexOf("msftconnecttest.com", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        containsNcsi = true;
+                        break;
+                    }
+                }
+                if (!containsNcsi)
+                {
+                    // 插入到顶部以确保优先匹配
+                    userruleLines.Insert(0, NcsiProbeUrlRule);
+                }
+            }
+            catch
+            {
+                // 任何异常都不影响后续 PAC 生成，保持原有行为
+            }
+
             List<string> ruleLines = GenerateRules(directGroups, proxiedGroups, blacklist);
             abpContent =
 $@"var __USERRULES__ = {JsonConvert.SerializeObject(userruleLines, Formatting.Indented)};
